@@ -69,6 +69,13 @@
   </div>
 
   <div style="margin-top:8px;">
+  <label class="small">
+    <input id="elasticToggle" type="checkbox">
+    Enable elastic edges
+  </label>
+</div>
+
+  <div style="margin-top:8px;">
     <button id="regenBtn" class="btn">Regenerate</button>
     <button id="resetSelect" class="btn">Clear Selection</button>
   </div>
@@ -110,19 +117,46 @@ function makeLinkState(){ return { meshA:null, meshB:null, colorA:'#fff', colorB
 
 function initLinkStatesFromRaw(){
   // cleanup
-  linkStates.forEach((st)=>{ disposeMesh(st.meshA); disposeMesh(st.meshB); });
-  linkStates.clear(); while(stringGroup.children.length){ const c = stringGroup.children[0]; stringGroup.remove(c); try{ disposeMesh(c); }catch(e){} }
-  (rawData.links||[]).forEach(l=>{
+  linkStates.forEach(st => { disposeMesh(st.meshA); });
+  linkStates.clear();
+  while (stringGroup.children.length) {
+    const c = stringGroup.children[0];
+    stringGroup.remove(c);
+    disposeMesh(c);
+  }
+
+  (rawData.links || []).forEach(l => {
     const src = (typeof l.source === 'object') ? l.source.id : l.source;
     const tgt = (typeof l.target === 'object') ? l.target.id : l.target;
-    const k = keyFor(src,tgt);
+    const srcNode = rawData.nodes.find(n => n.id === src);
+    const tgtNode = rawData.nodes.find(n => n.id === tgt);
+    const srcColor = new THREE.Color(srcNode ? srcNode.color : '#cccccc');
+    const tgtColor = new THREE.Color(tgtNode ? tgtNode.color : '#cccccc');
+
+    const k = keyFor(src, tgt);
     const st = makeLinkState();
     linkStates.set(k, st);
-    const material = new THREE.LineBasicMaterial({ linewidth: 1, color: l.color || '#cccccc' });
+
+    // Create gradient line using vertex colors
     const geom = new THREE.BufferGeometry();
-    const pts = new Float32Array(6);
-    geom.setAttribute('position', new THREE.BufferAttribute(pts, 3));
-    const line = new THREE.Line(geom, material);
+    const positions = new Float32Array(6);
+    const colors = new Float32Array(6);
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+    colors.set([
+      srcColor.r, srcColor.g, srcColor.b,
+      tgtColor.r, tgtColor.g, tgtColor.b
+    ]);
+
+    const mat = new THREE.LineBasicMaterial({
+      vertexColors: true,
+      linewidth: 1,
+      transparent: true,
+      opacity: 0.9
+    });
+
+    const line = new THREE.Line(geom, mat);
     line.userData._edgeKey = k;
     stringGroup.add(line);
     st.meshA = line;
@@ -176,6 +210,25 @@ spreadSlider.addEventListener('input', e => {
   Graph.d3Force('charge').strength(val);
   Graph.numDimensions(3);
   setStatus(`Spread: ${-val}`);
+});
+  
+// ========= Elastic links toggle =========
+const elasticToggle = document.getElementById('elasticToggle');
+let elasticEnabled = false;
+
+elasticToggle.addEventListener('change', e => {
+  elasticEnabled = e.target.checked;
+  setStatus(elasticEnabled ? 'Elastic edges ON' : 'Elastic edges OFF');
+  // When toggled, we tweak the link force
+  const linkForce = Graph.d3Force('link');
+  if (elasticEnabled) {
+    linkForce.distance(() => 60 + Math.random() * 40);
+    linkForce.strength(0.03);
+  } else {
+    linkForce.distance(60);
+    linkForce.strength(0.1);
+  }
+  Graph.numDimensions(3);
 });
 
 /* ========= TTS ========= */
