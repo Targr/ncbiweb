@@ -222,8 +222,8 @@ elasticToggle.addEventListener('change', e => {
   // When toggled, we tweak the link force
   const linkForce = Graph.d3Force('link');
   if (elasticEnabled) {
-    linkForce.distance(() => 60 + Math.random() * 40);
-    linkForce.strength(0.03);
+    linkForce.distance(() => 80 + Math.random() * 25);
+    linkForce.strength(0.003);
   } else {
     linkForce.distance(60);
     linkForce.strength(0.1);
