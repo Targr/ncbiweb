@@ -1,0 +1,290 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>PubMed MeSH Graph — local</title>
+<style>
+  body{ margin:0; background:#000; color:#eee; font-family: Arial, sans-serif; }
+  #3d-graph{ width:100%; height:100vh; display:block; }
+  #hud{ position: absolute; right: 12px; top:12px; background: rgba(0,0,0,0.7); padding:12px; border-radius:8px; width:380px; z-index:20; }
+  .btn{ margin:4px; padding:6px 10px; }
+  #portal-display{ position:absolute; left:12px; top:12px; max-width:560px; z-index:20; color:#ddd; background: rgba(0,0,0,0.5); padding:10px; border-radius:8px; }
+  input[type="text"], input[type="number"]{ width:100%; padding:6px; margin-top:6px; box-sizing:border-box; }
+  .small{ font-size:12px; color:#ccc; }
+</style>
+</head>
+<body>
+<div id="3d-graph"></div>
+<div id="portal-display">Hover a node to see title + abstract.</div>
+
+<div id="hud">
+  <div><strong>PubMed MeSH Graph</strong></div>
+  <div class="small">Enter seeds (comma-separated terms or PMIDs)</div>
+  <input id="seedInput" type="text" placeholder="pseudomonas,aids" value="pseudomonas,aids">
+  <div style="display:flex; gap:8px; margin-top:8px;">
+    <div style="flex:1">
+      <div class="small">Search limit</div>
+      <input id="limitInput" type="number" value="15">
+    </div>
+    <div style="width:120px">
+      <div class="small">Connector limit</div>
+      <input id="connectorInput" type="number" value="20">
+    </div>
+  </div>
+
+  <div style="margin-top:8px;">
+    <button id="regenBtn" class="btn">Regenerate</button>
+    <button id="resetSelect" class="btn">Clear Selection</button>
+  </div>
+
+  <div style="margin-top:8px;">
+    <button id="hud-merge-nodes-btn" class="btn">Merge selected</button>
+    <button id="hud-read-summary-btn" class="btn">Read TTS</button>
+    <label class="small" style="display:block; margin-top:6px;"><input id="readAdjacent" type="checkbox"> Auto-read adjacent nodes</label>
+  </div>
+
+  <div id="hud-status" style="margin-top:8px; color:#8aff8a;" class="small"></div>
+</div>
+
+<!-- libs -->
+<script src="https://unpkg.com/three@0.150.1/build/three.min.js"></script>
+<script src="https://unpkg.com/3d-force-graph"></script>
+<script src="https://unpkg.com/three-spritetext"></script>
+
+<script>
+/* ======= Globals & ForceGraph init ======= */
+let rawData = { nodes: [], links: [] };
+const Graph = ForceGraph3D()(document.getElementById('3d-graph'))
+  .graphData(rawData)
+  .nodeRelSize(4)
+  .linkOpacity(0.9)
+  .backgroundColor('#000')
+  .nodeLabel(n => `<b>${escapeHtml(n.name)}</b>\n\n${escapeHtml(n.abstract || '')}`);
+
+Graph.cameraPosition({ z: 400 });
+
+/* link/tube helpers (simple) */
+const stringGroup = new THREE.Group();
+Graph.scene().add(stringGroup);
+const linkStates = new Map();
+function disposeMesh(m){ if(!m) return; try{ if(m.geometry) m.geometry.dispose(); if(m.material){ if(Array.isArray(m.material)) m.material.forEach(x=>x.dispose()); else m.material.dispose(); } }catch(e){} }
+
+function keyFor(src,tgt){ return `${src}::${tgt}`; }
+function makeLinkState(){ return { meshA:null, meshB:null, colorA:'#fff', colorB:'#fff', points:[] }; }
+
+function initLinkStatesFromRaw(){
+  // cleanup
+  linkStates.forEach((st)=>{ disposeMesh(st.meshA); disposeMesh(st.meshB); });
+  linkStates.clear(); while(stringGroup.children.length){ const c = stringGroup.children[0]; stringGroup.remove(c); try{ disposeMesh(c); }catch(e){} }
+  (rawData.links||[]).forEach(l=>{
+    const src = (typeof l.source === 'object') ? l.source.id : l.source;
+    const tgt = (typeof l.target === 'object') ? l.target.id : l.target;
+    const k = keyFor(src,tgt);
+    const st = makeLinkState();
+    linkStates.set(k, st);
+    // create a thin line for now
+    const material = new THREE.LineBasicMaterial({ linewidth: 1, color: l.color || '#cccccc' });
+    const geom = new THREE.BufferGeometry();
+    const pts = new Float32Array(6);
+    geom.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+    const line = new THREE.Line(geom, material);
+    line.userData._edgeKey = k;
+    stringGroup.add(line);
+    st.meshA = line;
+  });
+}
+
+function updateLinkPositions(){
+  // update simple straight line endpoints
+  linkStates.forEach((st,k)=>{
+    const [src,tgt] = k.split('::');
+    const s = rawData.nodes.find(n=>n.id===src);
+    const t = rawData.nodes.find(n=>n.id===tgt);
+    if(!s || !t) return;
+    const line = st.meshA;
+    if(!line) return;
+    const arr = line.geometry.attributes.position.array;
+    arr[0] = s.x||0; arr[1] = s.y||0; arr[2] = s.z||0;
+    arr[3] = t.x||0; arr[4] = t.y||0; arr[5] = t.z||0;
+    line.geometry.attributes.position.needsUpdate = true;
+    if(line.material) line.material.color.set(lColorForEdge(k));
+  });
+}
+
+function lColorForEdge(key){
+  // find link in rawData
+  const l = (rawData.links||[]).find(x=>{
+    const s = (typeof x.source==='object'?x.source.id:x.source);
+    const t = (typeof x.target==='object'?x.target.id:x.target);
+    return `${s}::${t}` === key;
+  });
+  return l ? (l.color || '#cccccc') : '#cccccc';
+}
+
+/* engine tick updates */
+Graph.onEngineTick(()=>{
+  updateLinkPositions();
+});
+
+/* simple utilities */
+function escapeHtml(s){ if(!s) return ''; return s.replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+function setStatus(t){ const el = document.getElementById('hud-status'); if(el) el.innerText = t; }
+
+/* ========= TTS ========= */
+function speakText(text, opts={rate:1.0,pitch:1.0}){
+  return new Promise(resolve=>{
+    if(!('speechSynthesis' in window)){ console.warn('No TTS available'); resolve(); return; }
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.rate = opts.rate || 1.0; utt.pitch = opts.pitch || 1.0;
+    utt.onend = ()=>resolve(); utt.onerror = ()=>resolve();
+    window.speechSynthesis.speak(utt);
+  });
+}
+
+/* ========= Selection, Merge, Hover ========= */
+let selectedNodes = new Set();
+
+Graph.onNodeClick((node, evt)=>{
+  const shift = evt && evt.shiftKey;
+  if(!shift){ selectedNodes.clear(); }
+  selectedNodes.add(node.id);
+  // visually scale selected meshes
+  Graph.scene().traverse(obj=>{
+    if(obj.isMesh && obj.userData && obj.userData._nodeId){
+      if(selectedNodes.has(String(obj.userData._nodeId))) obj.scale.set(1.6,1.6,1.6);
+      else obj.scale.set(1,1,1);
+    }
+  });
+  setStatus(`Selected ${selectedNodes.size}`);
+});
+
+document.getElementById('resetSelect').addEventListener('click', ()=>{
+  selectedNodes.clear();
+  Graph.scene().traverse(obj=>{
+    if(obj.isMesh && obj.userData && obj.userData._nodeId) obj.scale.set(1,1,1);
+  });
+  setStatus('Selection cleared');
+});
+
+document.getElementById('hud-merge-nodes-btn').addEventListener('click', ()=>{
+  const sel = Array.from(selectedNodes);
+  if(sel.length < 2){ alert('Select 2+ nodes (Shift+click) to merge'); return; }
+  // simple merge first two
+  const a = sel[0], b = sel[1];
+  const na = rawData.nodes.find(n=>n.id===a), nb = rawData.nodes.find(n=>n.id===b);
+  if(!na || !nb) return;
+  const mergedId = `${a}||${b}`;
+  const mergedNode = {
+    id: mergedId,
+    name: na.name + ' + ' + nb.name,
+    abstract: (na.abstract||'') + '\n\n---\n\n' + (nb.abstract||''),
+    mesh: Array.from(new Set([...(na.mesh||[]), ...(nb.mesh||[])])),
+    val: Math.max(na.val||12, nb.val||12),
+    color: na.color || '#ffffff'
+  };
+  // rewire links
+  const rewired = [];
+  rawData.links.forEach(l=>{
+    let s = (typeof l.source==='object'? l.source.id : l.source);
+    let t = (typeof l.target==='object'? l.target.id : l.target);
+    if(s === a || s === b) s = mergedId;
+    if(t === a || t === b) t = mergedId;
+    if(s === t) return;
+    rewired.push({ source: s, target: t, color: l.color, semantic: l.semantic });
+  });
+  // dedup
+  const seen = new Set(); const dedup = [];
+  rewired.forEach(l=>{
+    const k = `${l.source}>>${l.target}`;
+    if(seen.has(k)) return; seen.add(k); dedup.push(l);
+  });
+  rawData.nodes = rawData.nodes.filter(n=>n.id !== a && n.id !== b);
+  rawData.nodes.push(mergedNode);
+  rawData.links = dedup;
+  // apply to graph
+  Graph.graphData(rawData);
+  initLinkStatesFromRaw();
+  Graph.refresh();
+  selectedNodes.clear();
+  setStatus(`Merged ${a} + ${b}`);
+});
+
+/* hover details */
+Graph.onNodeHover(node=>{
+  const el = document.getElementById('portal-display');
+  if(!node){ el.innerText = 'Hover a node to see title and abstract.'; return; }
+  const meshLines = (node.mesh_detail && node.mesh_detail.length) ? '\n\nMeSH:\n' + node.mesh_detail.map(m=>`• ${m.descriptor}${m.major?'★':''}`).join('\n') : '';
+  el.innerText = `${node.title_full || node.name}\n\n${node.abstract || ''}${meshLines}`;
+});
+
+/* TTS button behavior */
+document.getElementById('hud-read-summary-btn').addEventListener('click', async ()=>{
+  if(selectedNodes.size === 0){ alert('Select a node first'); return; }
+  const nid = Array.from(selectedNodes)[0];
+  const node = rawData.nodes.find(n=>n.id===nid);
+  if(!node) return;
+  if(window.speechSynthesis) window.speechSynthesis.cancel();
+  await speakText(`${node.title_full}. ${node.abstract || 'No abstract available.'}`);
+  if(document.getElementById('readAdjacent').checked){
+    // speak one random neighbor
+    const neigh = rawData.links.filter(l=> l.source === nid || l.target === nid).map(l => (l.source===nid? l.target : l.source));
+    if(neigh.length){
+      const nextId = neigh[Math.floor(Math.random()*neigh.length)];
+      const n2 = rawData.nodes.find(x=>x.id===nextId);
+      if(n2){ await speakText(`${n2.title_full}. ${n2.abstract || ''}`); }
+    }
+  }
+});
+
+/* ========= Regen (fetch graph from server) ========= */
+async function regenGraph(){
+  const seedText = document.getElementById('seedInput').value.trim();
+  if(!seedText){ alert('Enter seeds'); return; }
+  const seeds = seedText.split(',').map(s=>s.trim()).filter(Boolean).join(',');
+  const limit = parseInt(document.getElementById('limitInput').value) || 15;
+  const connector = parseInt(document.getElementById('connectorInput').value) || 20;
+  setStatus('Requesting server graph...');
+
+  try{
+    // Reset visual state fully before new data
+    Graph.graphData({ nodes: [], links: [] });
+    rawData = { nodes: [], links: [] };
+    linkStates.clear();
+    while(stringGroup.children.length){ const c = stringGroup.children[0]; stringGroup.remove(c); try{ disposeMesh(c); }catch(e){} }
+    selectedNodes.clear();
+
+    const resp = await fetch(`/api/graph?seeds=${encodeURIComponent(seeds)}&limit=${limit}&connector_limit=${connector}`);
+    if(!resp.ok) throw new Error('Server failed: ' + resp.status);
+    const j = await resp.json();
+    rawData = j;
+    // keep title_full and abstract present; ensure node ids are strings
+    rawData.nodes = (rawData.nodes||[]).map(n=>({ ...n, id: String(n.id), title_full: n.title_full || n.name, abstract: n.abstract || '', mesh_detail: n.mesh_detail || [] }));
+    rawData.links = (rawData.links||[]).map(l=>({ source: String(l.source), target: String(l.target), color: l.color || '#cccccc', semantic: !!l.semantic }));
+
+    window.rawData = rawData;
+    Graph.graphData(rawData);
+    initLinkStatesFromRaw();
+    Graph
+      .linkColor(l => l.semantic ? '#66bb6a' : '#cccccc')
+      .linkWidth(l => l.semantic ? 2 : 1)
+      .linkDirectionalParticles(l => l.semantic ? 2 : 0);
+
+    Graph.refresh();
+    setStatus(`Fetched ${rawData.nodes.length} nodes, ${rawData.links.length} links`);
+  }catch(err){
+    console.error('regen error', err);
+    setStatus('Error fetching graph — check server console');
+  }
+}
+
+document.getElementById('regenBtn').addEventListener('click', ()=>{ regenGraph(); });
+
+/* keep link geometry updated after engine stops so lines match node coords */
+Graph.onEngineStop(()=>{ updateLinkPositions(); });
+
+/* init minimal */
+initLinkStatesFromRaw();
+</script>
+
+</body>
+</html>
