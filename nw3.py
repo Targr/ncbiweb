@@ -217,23 +217,27 @@ def api_graph():
             all_links.add(edge_key(a,b))
 
     # compute semantic color if shared MeSH
+    # --- Compute edges (citations + shared MeSH) ---
     nodes = list(all_nodes.values())
     node_map = {n['id']: n for n in nodes}
+
+    # Step 1. Start with existing citation-based links
     links = []
+    citation_edges = set()
     for edge in all_links:
         try:
-            a,b = edge.split('->')
-        except:
+            a, b = edge.split("->")
+        except ValueError:
             continue
-        src = node_map.get(a)
-        tgt = node_map.get(b)
-        if not src or not tgt:
-            # skip edges to nodes we don't have metadata for
+        if a not in node_map or b not in node_map:
             continue
+        src = node_map[a]
+        tgt = node_map[b]
         color = "#cccccc"
         semantic = False
-        if src.get('mesh') and tgt.get('mesh'):
-            shared = set(src['mesh']).intersection(set(tgt['mesh']))
+        # color green if MeSH overlap
+        if src.get("mesh") and tgt.get("mesh"):
+            shared = set(src["mesh"]).intersection(tgt["mesh"])
             if shared:
                 color = "#66bb6a"
                 semantic = True
@@ -243,6 +247,32 @@ def api_graph():
             "color": color,
             "semantic": semantic
         })
+        citation_edges.add(frozenset((a, b)))  # undirected dedup key
+
+    # Step 2. Add new edges purely for shared MeSH tags
+    # Group nodes by each MeSH descriptor
+    mesh_index = {}
+    for n in nodes:
+        for m in n.get("mesh", []):
+            mesh_index.setdefault(m, []).append(n["id"])
+
+    # For each MeSH term, connect all pairs of nodes that share it
+    for m, pmids in mesh_index.items():
+        if len(pmids) < 2:
+            continue
+        for i in range(len(pmids)):
+            for j in range(i + 1, len(pmids)):
+                a, b = pmids[i], pmids[j]
+                key = frozenset((a, b))
+                if key in citation_edges:
+                    continue  # already connected
+                links.append({
+                    "source": a,
+                    "target": b,
+                    "color": "#4caf50",
+                    "semantic": True
+                })
+                citation_edges.add(key)
 
     return jsonify({"nodes": nodes, "links": links})
 
