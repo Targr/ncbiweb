@@ -6,10 +6,40 @@
 <style>
   body{ margin:0; background:#000; color:#eee; font-family: Arial, sans-serif; }
   #3d-graph{ width:100%; height:100vh; display:block; }
-  #hud{ position: absolute; right: 12px; top:12px; background: rgba(0,0,0,0.7); padding:12px; border-radius:8px; width:380px; z-index:20; }
+  #hud{
+    position:absolute;
+    right:12px;
+    top:12px;
+    background:rgba(0,0,0,0.7);
+    padding:12px;
+    border-radius:8px;
+    width:380px;
+    z-index:20;
+    transition:all 0.3s ease;
+  }
+  #hud.collapsed{
+    width:40px;
+    height:40px;
+    overflow:hidden;
+    padding:6px;
+    cursor:pointer;
+  }
+  #hud.collapsed *:not(#hud-toggle){
+    display:none;
+  }
+  #hud-toggle{
+    position:absolute;
+    top:6px;
+    right:6px;
+    font-size:18px;
+    cursor:pointer;
+    color:#ccc;
+  }
+  #hud-toggle:hover{ color:#fff; }
+
   .btn{ margin:4px; padding:6px 10px; }
   #portal-display{ position:absolute; left:12px; top:12px; max-width:560px; z-index:20; color:#ddd; background: rgba(0,0,0,0.5); padding:10px; border-radius:8px; }
-  input[type="text"], input[type="number"]{ width:100%; padding:6px; margin-top:6px; box-sizing:border-box; }
+  input[type="text"], input[type="number"], input[type="range"]{ width:100%; padding:6px; margin-top:6px; box-sizing:border-box; }
   .small{ font-size:12px; color:#ccc; }
 </style>
 </head>
@@ -18,6 +48,7 @@
 <div id="portal-display">Hover a node to see title + abstract.</div>
 
 <div id="hud">
+  <div id="hud-toggle">−</div>
   <div><strong>PubMed MeSH Graph</strong></div>
   <div class="small">Enter seeds (comma-separated terms or PMIDs)</div>
   <input id="seedInput" type="text" placeholder="pseudomonas,aids" value="pseudomonas,aids">
@@ -30,6 +61,11 @@
       <div class="small">Connector limit</div>
       <input id="connectorInput" type="number" value="20">
     </div>
+  </div>
+
+  <div style="margin-top:8px;">
+    <div class="small">Node spread</div>
+    <input id="spreadSlider" type="range" min="10" max="800" value="150" step="10">
   </div>
 
   <div style="margin-top:8px;">
@@ -82,7 +118,6 @@ function initLinkStatesFromRaw(){
     const k = keyFor(src,tgt);
     const st = makeLinkState();
     linkStates.set(k, st);
-    // create a thin line for now
     const material = new THREE.LineBasicMaterial({ linewidth: 1, color: l.color || '#cccccc' });
     const geom = new THREE.BufferGeometry();
     const pts = new Float32Array(6);
@@ -95,7 +130,6 @@ function initLinkStatesFromRaw(){
 }
 
 function updateLinkPositions(){
-  // update simple straight line endpoints
   linkStates.forEach((st,k)=>{
     const [src,tgt] = k.split('::');
     const s = rawData.nodes.find(n=>n.id===src);
@@ -112,7 +146,6 @@ function updateLinkPositions(){
 }
 
 function lColorForEdge(key){
-  // find link in rawData
   const l = (rawData.links||[]).find(x=>{
     const s = (typeof x.source==='object'?x.source.id:x.source);
     const t = (typeof x.target==='object'?x.target.id:x.target);
@@ -121,14 +154,29 @@ function lColorForEdge(key){
   return l ? (l.color || '#cccccc') : '#cccccc';
 }
 
-/* engine tick updates */
-Graph.onEngineTick(()=>{
-  updateLinkPositions();
-});
+Graph.onEngineTick(()=>{ updateLinkPositions(); });
 
-/* simple utilities */
 function escapeHtml(s){ if(!s) return ''; return s.replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
 function setStatus(t){ const el = document.getElementById('hud-status'); if(el) el.innerText = t; }
+
+/* ========= HUD COLLAPSE ========= */
+const hud = document.getElementById('hud');
+const hudToggle = document.getElementById('hud-toggle');
+let hudCollapsed = false;
+hudToggle.addEventListener('click', () => {
+  hudCollapsed = !hudCollapsed;
+  hud.classList.toggle('collapsed', hudCollapsed);
+  hudToggle.innerText = hudCollapsed ? '+' : '−';
+});
+
+/* ========= Node spread slider ========= */
+const spreadSlider = document.getElementById('spreadSlider');
+spreadSlider.addEventListener('input', e => {
+  const val = -parseFloat(e.target.value);
+  Graph.d3Force('charge').strength(val);
+  Graph.numDimensions(3);
+  setStatus(`Spread: ${-val}`);
+});
 
 /* ========= TTS ========= */
 function speakText(text, opts={rate:1.0,pitch:1.0}){
@@ -148,7 +196,6 @@ Graph.onNodeClick((node, evt)=>{
   const shift = evt && evt.shiftKey;
   if(!shift){ selectedNodes.clear(); }
   selectedNodes.add(node.id);
-  // visually scale selected meshes
   Graph.scene().traverse(obj=>{
     if(obj.isMesh && obj.userData && obj.userData._nodeId){
       if(selectedNodes.has(String(obj.userData._nodeId))) obj.scale.set(1.6,1.6,1.6);
@@ -169,7 +216,6 @@ document.getElementById('resetSelect').addEventListener('click', ()=>{
 document.getElementById('hud-merge-nodes-btn').addEventListener('click', ()=>{
   const sel = Array.from(selectedNodes);
   if(sel.length < 2){ alert('Select 2+ nodes (Shift+click) to merge'); return; }
-  // simple merge first two
   const a = sel[0], b = sel[1];
   const na = rawData.nodes.find(n=>n.id===a), nb = rawData.nodes.find(n=>n.id===b);
   if(!na || !nb) return;
@@ -182,7 +228,6 @@ document.getElementById('hud-merge-nodes-btn').addEventListener('click', ()=>{
     val: Math.max(na.val||12, nb.val||12),
     color: na.color || '#ffffff'
   };
-  // rewire links
   const rewired = [];
   rawData.links.forEach(l=>{
     let s = (typeof l.source==='object'? l.source.id : l.source);
@@ -192,7 +237,6 @@ document.getElementById('hud-merge-nodes-btn').addEventListener('click', ()=>{
     if(s === t) return;
     rewired.push({ source: s, target: t, color: l.color, semantic: l.semantic });
   });
-  // dedup
   const seen = new Set(); const dedup = [];
   rewired.forEach(l=>{
     const k = `${l.source}>>${l.target}`;
@@ -201,7 +245,6 @@ document.getElementById('hud-merge-nodes-btn').addEventListener('click', ()=>{
   rawData.nodes = rawData.nodes.filter(n=>n.id !== a && n.id !== b);
   rawData.nodes.push(mergedNode);
   rawData.links = dedup;
-  // apply to graph
   Graph.graphData(rawData);
   initLinkStatesFromRaw();
   Graph.refresh();
@@ -209,7 +252,6 @@ document.getElementById('hud-merge-nodes-btn').addEventListener('click', ()=>{
   setStatus(`Merged ${a} + ${b}`);
 });
 
-/* hover details */
 Graph.onNodeHover(node=>{
   const el = document.getElementById('portal-display');
   if(!node){ el.innerText = 'Hover a node to see title and abstract.'; return; }
@@ -217,7 +259,6 @@ Graph.onNodeHover(node=>{
   el.innerText = `${node.title_full || node.name}\n\n${node.abstract || ''}${meshLines}`;
 });
 
-/* TTS button behavior */
 document.getElementById('hud-read-summary-btn').addEventListener('click', async ()=>{
   if(selectedNodes.size === 0){ alert('Select a node first'); return; }
   const nid = Array.from(selectedNodes)[0];
@@ -226,7 +267,6 @@ document.getElementById('hud-read-summary-btn').addEventListener('click', async 
   if(window.speechSynthesis) window.speechSynthesis.cancel();
   await speakText(`${node.title_full}. ${node.abstract || 'No abstract available.'}`);
   if(document.getElementById('readAdjacent').checked){
-    // speak one random neighbor
     const neigh = rawData.links.filter(l=> l.source === nid || l.target === nid).map(l => (l.source===nid? l.target : l.source));
     if(neigh.length){
       const nextId = neigh[Math.floor(Math.random()*neigh.length)];
@@ -236,7 +276,6 @@ document.getElementById('hud-read-summary-btn').addEventListener('click', async 
   }
 });
 
-/* ========= Regen (fetch graph from server) ========= */
 async function regenGraph(){
   const seedText = document.getElementById('seedInput').value.trim();
   if(!seedText){ alert('Enter seeds'); return; }
@@ -246,7 +285,6 @@ async function regenGraph(){
   setStatus('Requesting server graph...');
 
   try{
-    // Reset visual state fully before new data
     Graph.graphData({ nodes: [], links: [] });
     rawData = { nodes: [], links: [] };
     linkStates.clear();
@@ -257,7 +295,6 @@ async function regenGraph(){
     if(!resp.ok) throw new Error('Server failed: ' + resp.status);
     const j = await resp.json();
     rawData = j;
-    // keep title_full and abstract present; ensure node ids are strings
     rawData.nodes = (rawData.nodes||[]).map(n=>({ ...n, id: String(n.id), title_full: n.title_full || n.name, abstract: n.abstract || '', mesh_detail: n.mesh_detail || [] }));
     rawData.links = (rawData.links||[]).map(l=>({ source: String(l.source), target: String(l.target), color: l.color || '#cccccc', semantic: !!l.semantic }));
 
@@ -279,12 +316,8 @@ async function regenGraph(){
 
 document.getElementById('regenBtn').addEventListener('click', ()=>{ regenGraph(); });
 
-/* keep link geometry updated after engine stops so lines match node coords */
 Graph.onEngineStop(()=>{ updateLinkPositions(); });
-
-/* init minimal */
 initLinkStatesFromRaw();
 </script>
-
 </body>
 </html>
