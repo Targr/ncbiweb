@@ -305,12 +305,12 @@ document.getElementById('hud-merge-nodes-btn').addEventListener('click', ()=>{
   setStatus(`Merged ${a} + ${b}`);
 });
 
-Graph.onNodeHover(node=>{
-  const el = document.getElementById('portal-display');
-  if(!node){ el.innerText = 'Hover a node to see title and abstract.'; return; }
-  const meshLines = (node.mesh_detail && node.mesh_detail.length) ? '\n\nMeSH:\n' + node.mesh_detail.map(m=>`• ${m.descriptor}${m.major?'★':''}`).join('\n') : '';
-  el.innerText = `${node.title_full || node.name}\n\n${node.abstract || ''}${meshLines}`;
-});
+//Graph.onNodeHover(node=>{
+//  const el = document.getElementById('portal-display');
+//  if(!node){ el.innerText = 'Hover a node to see title and abstract.'; return; }
+//  const meshLines = (node.mesh_detail && node.mesh_detail.length) ? '\n\nMeSH:\n' + node.mesh_detail.map(m=>`• ${m.descriptor}${m.major?'★':''}`).join('\n') : '';
+//  el.innerText = `${node.title_full || node.name}\n\n${node.abstract || ''}${meshLines}`;
+//});
 
 document.getElementById('hud-read-summary-btn').addEventListener('click', async ()=>{
   if(selectedNodes.size === 0){ alert('Select a node first'); return; }
