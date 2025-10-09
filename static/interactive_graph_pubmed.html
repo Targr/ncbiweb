@@ -355,7 +355,7 @@ async function regenGraph(){
     Graph.graphData(rawData);
     initLinkStatesFromRaw();
     Graph
-      .linkColor(l => l.semantic ? '#66bb6a' : '#cccccc')
+//      .linkColor(l => l.semantic ? '#66bb6a' : '#cccccc')
       .linkWidth(l => l.semantic ? 2 : 1)
       .linkDirectionalParticles(l => l.semantic ? 2 : 0);
 
